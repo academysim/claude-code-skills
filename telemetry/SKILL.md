@@ -31,6 +31,22 @@ listener before driving.
 
 If nothing arrives, the listener says so after a few seconds rather than sitting silent.
 
+**Verified live against BeamNG.drive 0.39.4 on 2026-08-27**, a steady ~52 Hz. The setting
+lives in `settings/cloud/settings.json` as `protocols_outgauge_enabled` — *not*
+`game-settings.json`, where looking for it finds nothing — and it takes effect immediately
+with no relaunch. Only `enabled` is stored; the target defaults to `127.0.0.1:4444`.
+
+### A gap in the stream means the physics froze
+
+OutGauge is emitted from inside the simulation loop, so it stops when the sim stops. When
+the stream goes dark, compare the speed either side of the gap: **identical speed across a
+multi-second gap means the simulation was frozen**, not that packets were dropped, because a
+moving car would have travelled. BeamNG pauses on focus loss, so alt-tabbing out produces
+exactly this signature.
+
+That also makes the stream a ~50 Hz heartbeat from inside the physics loop, which resolves a
+freeze far more precisely than any external poll — a 20s freeze is visible to about 20ms.
+
 The OutGauge protocol carries no steering channel, so `steer_deg` is blank for these
 recordings. That is the protocol, not a bug. Speed, throttle, brake, clutch, gear and RPM
 are all present.
