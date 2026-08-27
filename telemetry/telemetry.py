@@ -213,7 +213,7 @@ def cmd_listen(args):
     print(f"listening on {args.host}:{args.port} for OutGauge, writing {dest}")
     print(f"stop with Ctrl+C" + (f", or after {args.seconds}s" if args.seconds else ""))
     fh, w = open_writer(dest)
-    n, bad, t0, first_seen = 0, 0, time.time(), None
+    n, bad, t0, first_seen, warned = 0, 0, time.time(), None, False
     try:
         while True:
             if args.seconds and time.time() - t0 >= args.seconds:
@@ -221,9 +221,11 @@ def cmd_listen(args):
             try:
                 data, _addr = sock.recvfrom(4096)
             except socket.timeout:
-                if not n and time.time() - t0 > 6 and first_seen is None:
+                if not n and time.time() - t0 > 6 and not warned:
                     print("  (nothing received yet - is OutGauge enabled and pointed here?)")
-                    first_seen = False
+                    # A separate flag: first_seen must stay None until a packet actually
+                    # arrives, or t is measured from the epoch instead of from the start.
+                    warned = True
                 continue
             rec = decode_outgauge(data)
             if rec is None:
@@ -240,6 +242,9 @@ def cmd_listen(args):
                         "clutch": round(rec["clutch"], 4),
                         "gear": rec["gear"], "rpm": round(rec["rpm"], 1)})
             n += 1
+            # Long captures must survive being killed, so do not sit on a full buffer.
+            if n % 500 == 0:
+                fh.flush()
     except KeyboardInterrupt:
         pass
     finally:
@@ -314,6 +319,15 @@ def cmd_summary(args):
         print(f"ERROR: {path} has {len(rows)} usable rows", file=sys.stderr)
         return 3
 
+    # Captures written before the epoch-timestamp fix start t at Unix time rather than
+    # at zero. Rebase them so old files stay usable instead of reporting a 57-year run.
+    rebased = False
+    if rows[0]["t"] > 1_000_000:
+        base = rows[0]["t"]
+        for r in rows:
+            r["t"] -= base
+        rebased = True
+
     dur = rows[-1]["t"] - rows[0]["t"]
     speeds = [r["speed_mph"] for r in rows if r.get("speed_mph") is not None]
     # Trapezoidal integration of mph over seconds, converted to miles.
@@ -355,6 +369,8 @@ def cmd_summary(args):
         return (100.0 * sum(1 for r in vals if test(r[key])) / len(vals)) if vals else 0.0
 
     print(f"{path.name}: {len(rows)} samples, {dur:.1f}s, ~{len(rows) / dur:.0f} Hz")
+    if rebased:
+        print("  NOTE: timestamps were absolute (pre-fix capture); rebased to start at 0.")
     print(f"  distance     {dist:.3f} mi")
     print(f"  speed        max {max(speeds):.1f} mph, mean {sum(speeds) / len(speeds):.1f} mph")
     print(f"  full throttle {frac('throttle', lambda v: v > 0.95):.0f}% of samples")
