@@ -354,10 +354,12 @@ def cmd_summary(args):
             # Consecutive samples above threshold are one braking event, not many.
             if cur is None:
                 cur = {"t": rows[i]["t"], "g": g, "from": rows[j]["speed_mph"],
-                       "to": rows[i]["speed_mph"]}
+                       "to": rows[i]["speed_mph"], "brake": 0.0}
             else:
                 cur["g"] = max(cur["g"], g)
                 cur["to"] = rows[i]["speed_mph"]
+            cur["brake"] = max(cur["brake"], max((rows[k].get("brake") or 0)
+                                                 for k in range(j, i + 1)))
         elif cur is not None:
             events.append(cur)
             cur = None
@@ -380,8 +382,17 @@ def cmd_summary(args):
     print(f"  peak decel    {peak:.2f} g  (measured over {args.min_dt}s windows)")
     print(f"  hard brakes   {len(events)} over {args.brake_g}g")
     for e in events[: args.max_events]:
-        print(f"     t={e['t']:7.2f}s  peak {e['g']:.2f} g  "
-              f"{e['from']:.0f} -> {e['to']:.0f} mph")
+        # Road tyres cannot generate much beyond ~1.5 g. Anything above that is the
+        # car hitting something or being reset, whatever the brake pedal was doing --
+        # a real impact often happens WHILE braking, so pedal position cannot classify.
+        verdict = "IMPACT/RESET" if e["g"] > args.grip_g else (
+            "braking" if e["brake"] > 0.25 else "coasting")
+        print(f"     t={e['t']:7.2f}s  peak {e['g']:5.2f} g  "
+              f"{e['from']:3.0f} -> {e['to']:3.0f} mph  "
+              f"brake {e['brake']:.2f}  {verdict}")
+    hits = sum(1 for e in events if e["g"] > args.grip_g)
+    if hits:
+        print(f"     ({hits} above {args.grip_g}g, beyond tyre grip - impacts, not braking)")
     if len(events) > args.max_events:
         print(f"     ... {len(events) - args.max_events} more not listed")
     if gaps:
@@ -480,6 +491,8 @@ def main():
     p = sub.add_parser("summary", help="stats for a recorded CSV")
     p.add_argument("csv")
     p.add_argument("--brake-g", type=float, default=0.5)
+    p.add_argument("--grip-g", type=float, default=1.5,
+                   help="above this is an impact, not braking (default 1.5)")
     p.add_argument("--min-dt", type=float, default=0.25,
                    help="window for measuring deceleration, default 0.25s")
     p.add_argument("--max-events", type=int, default=12)
