@@ -12,6 +12,7 @@ and does not guess: a slip angle or a brake trace cannot be recovered from a scr
 """
 import argparse
 import csv
+import datetime as dt
 import ctypes
 import mmap
 import socket
@@ -188,7 +189,8 @@ def build_irsdk_fixture(path, samples):
 
 # --------------------------------------------------------------------------- commands
 
-CSV_COLS = ["t", "speed_mph", "throttle", "brake", "gear", "rpm", "steer_deg", "clutch"]
+CSV_COLS = ["iso", "t", "speed_mph", "throttle", "brake", "gear", "rpm",
+            "steer_deg", "clutch"]
 
 
 def open_writer(dest):
@@ -235,7 +237,9 @@ def cmd_listen(args):
                 first_seen = time.time()
                 print(f"  first packet: car={rec['car'] or '?'} "
                       f"{rec['speed_mph']:.1f} mph gear={rec['gear']}")
-            w.writerow({"t": round(time.time() - first_seen, 4),
+            now = time.time()
+            w.writerow({"iso": dt.datetime.fromtimestamp(now).isoformat(timespec="milliseconds"),
+                        "t": round(now - first_seen, 4),
                         "speed_mph": round(rec["speed_mph"], 3),
                         "throttle": round(rec["throttle"], 4),
                         "brake": round(rec["brake"], 4),
@@ -281,8 +285,10 @@ def cmd_iracing(args):
     try:
         while not args.seconds or time.time() - t0 < args.seconds:
             spd = ir.get("Speed")
+            now = time.time()
             row = {
-                "t": round(time.time() - t0, 4),
+                "iso": dt.datetime.fromtimestamp(now).isoformat(timespec="milliseconds"),
+                "t": round(now - t0, 4),
                 "speed_mph": round((spd or 0) * MPS_TO_MPH, 3),
                 "throttle": round(ir.get("Throttle") or 0, 4),
                 "brake": round(ir.get("Brake") or 0, 4),
@@ -311,7 +317,8 @@ def cmd_summary(args):
     with path.open(encoding="utf-8-sig", newline="") as fh:
         for r in csv.DictReader(fh):
             try:
-                rows.append({k: (float(v) if k != "gear" and v not in ("", None) else v)
+                rows.append({k: (float(v) if k not in ("gear", "iso")
+                                 and v not in ("", None) else v)
                              for k, v in r.items()})
             except ValueError:
                 continue
@@ -491,8 +498,8 @@ def main():
     p = sub.add_parser("summary", help="stats for a recorded CSV")
     p.add_argument("csv")
     p.add_argument("--brake-g", type=float, default=0.5)
-    p.add_argument("--grip-g", type=float, default=1.5,
-                   help="above this is an impact, not braking (default 1.5)")
+    p.add_argument("--grip-g", type=float, default=2.0,
+                   help="above this is an impact, not braking (default 2.0)")
     p.add_argument("--min-dt", type=float, default=0.25,
                    help="window for measuring deceleration, default 0.25s")
     p.add_argument("--max-events", type=int, default=12)
